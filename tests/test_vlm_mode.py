@@ -62,6 +62,7 @@ def _patch():
     s2v._HF_AVAILABLE = True
     s2v.AutoModel = type("AutoModel", (), {"from_pretrained": staticmethod(
         lambda *a, **k: FakeVLM(FakeConfig()))})
+    s2v.AutoModelForImageTextToText = s2v.AutoModel
     s2v.AutoProcessor = type("AutoProcessor", (), {"from_pretrained": staticmethod(
         lambda *a, **k: FakeProcessor())})
 
