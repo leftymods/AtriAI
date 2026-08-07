@@ -37,6 +37,7 @@ try:
         AutoModelForImageTextToText = AutoModel
     _HF_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
+    AutoModel = AutoProcessor = AutoModelForImageTextToText = None
     _HF_AVAILABLE = False
 
 
