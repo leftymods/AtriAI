@@ -31,6 +31,10 @@ from .latent import LatentProjector
 
 try:
     from transformers import AutoModel, AutoProcessor
+    try:
+        from transformers import AutoModelForImageTextToText
+    except ImportError:  # pragma: no cover - older transformers
+        AutoModelForImageTextToText = AutoModel
     _HF_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
     _HF_AVAILABLE = False
@@ -112,6 +116,8 @@ class System2(nn.Module):
         if cfg.model_type == "vlm":
             if not _HF_AVAILABLE:
                 raise ImportError("install 'transformers' to use model_type='vlm'")
+            load = AutoModelForImageTextToText if AutoModelForImageTextToText is not AutoModel else AutoModel
+            load = AutoModelForImageTextToText if AutoModelForImageTextToText is not AutoModel else AutoModel
             if cfg.lora:
                 try:
                     from transformers import BitsAndBytesConfig
@@ -123,9 +129,9 @@ class System2(nn.Module):
                         load_in_4bit=True, bnb_4bit_use_double_quant=True,
                         bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16,
                     )
-                self.vlm = AutoModel.from_pretrained(cfg.vlm_name, torch_dtype="auto", **kwargs)
+                self.vlm = load.from_pretrained(cfg.vlm_name, torch_dtype="auto", **kwargs)
             else:
-                self.vlm = AutoModel.from_pretrained(cfg.vlm_name, torch_dtype="auto")
+                self.vlm = load.from_pretrained(cfg.vlm_name, torch_dtype="auto")
             self.processor = AutoProcessor.from_pretrained(cfg.vlm_name, trust_remote_code=True)
             self.vlm_hidden = self.vlm.config.hidden_size
             self.vision = None
@@ -176,10 +182,10 @@ class System2(nn.Module):
         if self.processor is None:
             raise RuntimeError("chat() requires AutoProcessor")
         import torch as _t
-        msgs = [{"role": "user", "content": [
-            {"type": "image", "image": image.permute(1, 2, 0).cpu().numpy()} if image is not None else {},
-            {"type": "text", "text": text},
-        ]}]
+        content = [{"type": "text", "text": text}]
+        if image is not None:
+            content.insert(0, {"type": "image", "image": image.permute(1, 2, 0).cpu().numpy()})
+        msgs = [{"role": "user", "content": content}]
         prompt = self.processor.apply_chat_template(
             msgs, tokenize=False, add_generation_prompt=True)
         inputs = self.processor(text=prompt, images=None, return_tensors="pt")
