@@ -134,7 +134,9 @@ class System2(nn.Module):
             else:
                 self.vlm = load.from_pretrained(cfg.vlm_name, torch_dtype="auto")
             self.processor = AutoProcessor.from_pretrained(cfg.vlm_name, trust_remote_code=True)
-            self.vlm_hidden = self.vlm.config.hidden_size
+            self.vlm_hidden = getattr(self.vlm.config, "hidden_size", None)
+            if self.vlm_hidden is None:  # transformers>=5 splits text/vision configs
+                self.vlm_hidden = getattr(self.vlm.config, "text_config", None).hidden_size
             self.vision = None
             self.lm = None
             self._device_override = None
@@ -149,6 +151,15 @@ class System2(nn.Module):
 
     # ------------------------------------------------------------------ VLM I/O
 
+    @staticmethod
+    def _to_pil(images: Tensor | None) -> list | None:
+        """(B,3,H,W) float tensor -> list of PIL Images (or None)."""
+        if images is None:
+            return None
+        from PIL import Image
+        imgs = (images.permute(0, 2, 3, 1).cpu().numpy() * 255).astype("uint8")
+        return [Image.fromarray(im) for im in imgs]
+
     def prepare_inputs(
         self,
         texts: list[str],
@@ -156,17 +167,24 @@ class System2(nn.Module):
     ) -> dict[str, Tensor] | None:
         """Tokenize text + images with the VLM's AutoProcessor (off-graph).
 
-        Returns the processor's tensors for the forward pass, or None in tiny mode
-        (where plain char-token ids are used instead).
+        Image tokens are inserted via the model's chat template so that
+        `input_ids` and `pixel_values` line up (transformers>=5 no longer
+        auto-inserts image placeholders into raw text). Returns the processor's
+        tensors, or None in tiny mode.
         """
         if self.processor is None:
             return None
-        pil_images = None
-        if images is not None:
-            imgs = (images.permute(0, 2, 3, 1).cpu().numpy() * 255)
-            imgs = imgs.astype("uint8")
-            from PIL import Image
-            pil_images = [Image.fromarray(im) for im in imgs]
+        pil_images = self._to_pil(images)
+        if pil_images is not None:
+            prompts = []
+            for text, img in zip(texts, pil_images):
+                msgs = [{"role": "user", "content": [
+                    {"type": "image", "image": img},
+                    {"type": "text", "text": text},
+                ]}]
+                prompts.append(self.processor.apply_chat_template(
+                    msgs, tokenize=False, add_generation_prompt=False))
+            texts = prompts
         with torch.no_grad():
             return self.processor(
                 text=list(texts), images=pil_images,
@@ -182,16 +200,16 @@ class System2(nn.Module):
             raise RuntimeError("chat() requires model_type='vlm'")
         if self.processor is None:
             raise RuntimeError("chat() requires AutoProcessor")
-        import torch as _t
+        pil = self._to_pil(image.unsqueeze(0)) if image is not None else None
         content = [{"type": "text", "text": text}]
-        if image is not None:
-            content.insert(0, {"type": "image", "image": image.permute(1, 2, 0).cpu().numpy()})
+        if pil is not None:
+            content.insert(0, {"type": "image", "image": pil[0]})
         msgs = [{"role": "user", "content": content}]
         prompt = self.processor.apply_chat_template(
             msgs, tokenize=False, add_generation_prompt=True)
-        inputs = self.processor(text=prompt, images=None, return_tensors="pt")
-        inputs = {k: v.to(self.vlm.device) for k, v in inputs.items() if k != "image_grid_thw"}
-        with _t.no_grad():
+        inputs = self.processor(text=prompt, images=pil, return_tensors="pt")
+        inputs = {k: v.to(self.vlm.device) for k, v in inputs.items()}
+        with torch.no_grad():
             out = self.vlm.generate(**inputs, max_new_tokens=max_new_tokens)
         return self.processor.decode(out[0], skip_special_tokens=True)
 
