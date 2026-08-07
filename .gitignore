@@ -1,0 +1,15 @@
+# checkpoints / модели не коммитим
+checkpoints/
+*.pt
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# vlm cache
+.hf_cache/
+models/

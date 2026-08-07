@@ -1,0 +1,49 @@
+# Репродукция Helix (Figure AI) — конфигурация по умолчанию.
+# Все величины соответствуют публичному описанию (https://www.figure.ai/news/helix).
+
+system2:
+  model_type: "tiny"         # "vlm" (реальная открытая VLM) | "tiny" (каркас без весов)
+  vlm_name: "Qwen/Qwen2-VL-2B-Instruct"   # полный масштаб ~7B; пример
+  vlm_freeze: false          # end-to-end: градиенты должны идти в VLM
+  lora: false                # QLoRA fine-tune VLM (нужны peft + bitsandbytes)
+  lora_r: 16
+  lora_alpha: 32
+  latent_dim: 512            # единый непрерывный латентный вектор S2->S1
+  rate_hz: 7.5               # S2 работает на 7–9 Гц
+
+system1:
+  latent_dim: 512
+  d_model: 768                # tuned so S1 ≈ 80M params (paper: 80M)
+  n_layers: 8
+  n_heads: 8
+  d_ff: 3072
+  max_seq_len: 4096
+  action_dim: 36             # 35-DoF верхнего тела + "% завершения задачи"
+  action_rate_hz: 200.0
+  vision:
+    backbone: "multiscale_conv"   # полностью свёрточный мультимасштабный
+    channels: [64, 128, 256, 512]
+    image_size: [224, 224]
+    pretrained_in_sim: true  # предобучен в симуляции
+  state_dim: 12              # поза запястья (7) + позиции пальцев (5)
+
+data:
+  teleop_hours: 500.0        # в оригинале ~500 ч
+  obs_history: 3
+  temporal_offset_ms: 120    # сдвиг входов S1/S2, калибруется по latency
+  image_fps: 30
+  num_workers: 8
+
+train:
+  batch_size: 16
+  lr: 0.0003
+  weight_decay: 0.05
+  max_steps: 250000
+  warmup_steps: 2000
+  grad_clip: 1.0
+  seed: 0
+
+deploy:
+  s2_device: "cuda:0"
+  s1_device: "cuda:1"
+  shared_memory_key: "helix_latent"
